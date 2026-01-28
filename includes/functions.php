@@ -167,6 +167,10 @@ function cleanupStaleData() {
     // Clean old sessions
     $stmt = db()->prepare("DELETE FROM user_sessions WHERE expires_at < NOW()");
     $stmt->execute();
+
+    // Expire old private rooms
+    $stmt = db()->prepare("UPDATE private_rooms SET status = 'expired' WHERE status = 'waiting' AND expires_at < NOW()");
+    $stmt->execute();
 }
 
 /**

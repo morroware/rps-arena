@@ -189,7 +189,7 @@ function tryFindMatch($userId) {
         db()->beginTransaction();
 
         // Get user's queue entry with lock
-        $stmt = db()->prepare("SELECT rating FROM matchmaking_queue WHERE user_id = ? FOR UPDATE");
+        $stmt = db()->prepare("SELECT user_id, rating FROM matchmaking_queue WHERE user_id = ? FOR UPDATE");
         $stmt->execute([$userId]);
         $userQueue = $stmt->fetch();
 
@@ -200,7 +200,7 @@ function tryFindMatch($userId) {
 
         // Find oldest other player in queue with lock (FIFO matching)
         $stmt = db()->prepare("
-            SELECT user_id FROM matchmaking_queue
+            SELECT user_id, rating FROM matchmaking_queue
             WHERE user_id != ?
             ORDER BY joined_at ASC
             LIMIT 1
@@ -214,12 +214,12 @@ function tryFindMatch($userId) {
             return null;
         }
 
-        // Create game
+        // Create game with pre-game ratings stored
         $stmt = db()->prepare("
-            INSERT INTO games (player1_id, player2_id, max_rounds, status)
-            VALUES (?, ?, ?, 'active')
+            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status)
+            VALUES (?, ?, ?, ?, ?, 'active')
         ");
-        $stmt->execute([$userId, $opponent['user_id'], DEFAULT_MAX_ROUNDS]);
+        $stmt->execute([$userId, $opponent['user_id'], $userQueue['rating'], $opponent['rating'], DEFAULT_MAX_ROUNDS]);
         $gameId = db()->lastInsertId();
 
         // Create first round
@@ -241,22 +241,39 @@ function tryFindMatch($userId) {
 /**
  * Create a new game
  */
-function createGame($player1Id, $player2Id) {
+function createGame($player1Id, $player2Id, $maxRounds = null, $isPrivate = false, $privateRoomId = null) {
+    if ($maxRounds === null) {
+        $maxRounds = DEFAULT_MAX_ROUNDS;
+    }
+
     try {
         db()->beginTransaction();
-        
-        // Create game
+
+        // Get player ratings for pre-game storage
+        $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
+        $stmt->execute([$player1Id, $player2Id]);
+        $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+        // Create game with pre-game ratings stored
         $stmt = db()->prepare("
-            INSERT INTO games (player1_id, player2_id, max_rounds, status) 
-            VALUES (?, ?, ?, 'active')
+            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
         ");
-        $stmt->execute([$player1Id, $player2Id, DEFAULT_MAX_ROUNDS]);
+        $stmt->execute([
+            $player1Id,
+            $player2Id,
+            $players[$player1Id],
+            $players[$player2Id],
+            $maxRounds,
+            $isPrivate ? 1 : 0,
+            $privateRoomId
+        ]);
         $gameId = db()->lastInsertId();
-        
+
         // Create first round
         $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, 1)");
         $stmt->execute([$gameId]);
-        
+
         db()->commit();
         return $gameId;
     } catch (Exception $e) {
@@ -327,9 +344,13 @@ function getGameState($gameId, $userId) {
         $stmt->execute([$userId]);
         $currentRating = $stmt->fetch()['rating'];
 
-        // Estimate old rating based on game outcome
-        $yourOldRating = $isPlayer1 ? $game['player1_rating'] : $game['player2_rating'];
-        $opponentOldRating = $isPlayer1 ? $game['player2_rating'] : $game['player1_rating'];
+        // Use stored pre-game ratings for accurate change display
+        $yourOldRating = $isPlayer1 ? $game['player1_rating_start'] : $game['player2_rating_start'];
+
+        // Fallback if pre-game ratings weren't stored (legacy games)
+        if ($yourOldRating === null) {
+            $yourOldRating = $currentRating;
+        }
 
         $ratingInfo = [
             'old_rating' => $yourOldRating,
@@ -581,4 +602,209 @@ function forfeitGame($gameId, $userId) {
     }
 
     return ['success' => true];
+}
+
+// ============ Private Room Functions ============
+
+/**
+ * Generate a room code (alphanumeric, easy to read/share)
+ */
+function generateRoomCode($length = 6) {
+    // Use characters that are easy to read and share (no ambiguous chars like 0/O, 1/l)
+    $chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    $code = '';
+    for ($i = 0; $i < $length; $i++) {
+        $code .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+    return $code;
+}
+
+/**
+ * Create a private game room
+ */
+function createPrivateRoom($hostId, $maxRounds = null) {
+    if ($maxRounds === null) {
+        $maxRounds = DEFAULT_MAX_ROUNDS;
+    }
+
+    // Check if host already has a waiting room
+    $stmt = db()->prepare("SELECT id FROM private_rooms WHERE host_id = ? AND status = 'waiting'");
+    $stmt->execute([$hostId]);
+    if ($stmt->fetch()) {
+        return ['success' => false, 'error' => 'You already have an open room'];
+    }
+
+    // Check if host is in an active game
+    $stmt = db()->prepare("SELECT id FROM games WHERE (player1_id = ? OR player2_id = ?) AND status IN ('waiting', 'active')");
+    $stmt->execute([$hostId, $hostId]);
+    if ($stmt->fetch()) {
+        return ['success' => false, 'error' => 'Already in a game'];
+    }
+
+    // Check host is not in matchmaking queue
+    $stmt = db()->prepare("SELECT id FROM matchmaking_queue WHERE user_id = ?");
+    $stmt->execute([$hostId]);
+    if ($stmt->fetch()) {
+        return ['success' => false, 'error' => 'Leave the matchmaking queue first'];
+    }
+
+    // Generate room code
+    $codeLength = defined('PRIVATE_ROOM_CODE_LENGTH') ? PRIVATE_ROOM_CODE_LENGTH : 6;
+    $code = generateRoomCode($codeLength);
+    $codeHash = password_hash($code, PASSWORD_DEFAULT);
+
+    $timeout = defined('PRIVATE_ROOM_TIMEOUT_SECONDS') ? PRIVATE_ROOM_TIMEOUT_SECONDS : 600;
+    $expiresAt = date('Y-m-d H:i:s', time() + $timeout);
+
+    $stmt = db()->prepare("
+        INSERT INTO private_rooms (host_id, room_code, code_hash, max_rounds, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([$hostId, $code, $codeHash, $maxRounds, $expiresAt]);
+
+    return [
+        'success' => true,
+        'room_id' => db()->lastInsertId(),
+        'room_code' => $code,
+        'expires_at' => $expiresAt
+    ];
+}
+
+/**
+ * Join a private game room
+ */
+function joinPrivateRoom($userId, $code) {
+    $code = strtoupper(trim($code));
+
+    // Find a waiting, non-expired room matching the code
+    $stmt = db()->prepare("
+        SELECT * FROM private_rooms
+        WHERE status = 'waiting' AND expires_at > NOW()
+        ORDER BY created_at DESC
+    ");
+    $stmt->execute();
+    $rooms = $stmt->fetchAll();
+
+    $matchedRoom = null;
+    foreach ($rooms as $room) {
+        if (password_verify($code, $room['code_hash'])) {
+            $matchedRoom = $room;
+            break;
+        }
+    }
+
+    if (!$matchedRoom) {
+        return ['success' => false, 'error' => 'Invalid or expired room code'];
+    }
+
+    if ($matchedRoom['host_id'] == $userId) {
+        return ['success' => false, 'error' => 'Cannot join your own room'];
+    }
+
+    // Check if joiner is in an active game
+    $stmt = db()->prepare("SELECT id FROM games WHERE (player1_id = ? OR player2_id = ?) AND status IN ('waiting', 'active')");
+    $stmt->execute([$userId, $userId]);
+    if ($stmt->fetch()) {
+        return ['success' => false, 'error' => 'Already in a game'];
+    }
+
+    // Create the game (host is player1, joiner is player2)
+    db()->beginTransaction();
+    try {
+        // Get player ratings for pre-game storage
+        $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
+        $stmt->execute([$matchedRoom['host_id'], $userId]);
+        $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+        $stmt = db()->prepare("
+            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
+            VALUES (?, ?, ?, ?, ?, 'active', TRUE, ?)
+        ");
+        $stmt->execute([
+            $matchedRoom['host_id'],
+            $userId,
+            $players[$matchedRoom['host_id']],
+            $players[$userId],
+            $matchedRoom['max_rounds'],
+            $matchedRoom['id']
+        ]);
+        $gameId = db()->lastInsertId();
+
+        // Create first round
+        $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, 1)");
+        $stmt->execute([$gameId]);
+
+        // Update room status
+        $stmt = db()->prepare("UPDATE private_rooms SET status = 'started', game_id = ? WHERE id = ?");
+        $stmt->execute([$gameId, $matchedRoom['id']]);
+
+        // Remove both players from matchmaking queue (safety)
+        $stmt = db()->prepare("DELETE FROM matchmaking_queue WHERE user_id IN (?, ?)");
+        $stmt->execute([$matchedRoom['host_id'], $userId]);
+
+        db()->commit();
+
+        return [
+            'success' => true,
+            'game_id' => $gameId
+        ];
+    } catch (Exception $e) {
+        db()->rollBack();
+        return ['success' => false, 'error' => 'Failed to create game'];
+    }
+}
+
+/**
+ * Cancel a private room
+ */
+function cancelPrivateRoom($userId) {
+    $stmt = db()->prepare("UPDATE private_rooms SET status = 'expired' WHERE host_id = ? AND status = 'waiting'");
+    $stmt->execute([$userId]);
+    return ['success' => true];
+}
+
+/**
+ * Check private room status
+ */
+function checkPrivateRoomStatus($userId) {
+    $stmt = db()->prepare("
+        SELECT pr.*, g.id as active_game_id, u.username as opponent_name
+        FROM private_rooms pr
+        LEFT JOIN games g ON pr.game_id = g.id
+        LEFT JOIN users u ON g.player2_id = u.id
+        WHERE pr.host_id = ? AND pr.status IN ('waiting', 'started')
+        ORDER BY pr.created_at DESC LIMIT 1
+    ");
+    $stmt->execute([$userId]);
+    $room = $stmt->fetch();
+
+    if (!$room) {
+        return ['success' => true, 'has_room' => false];
+    }
+
+    // Check expiration
+    if ($room['status'] === 'waiting' && strtotime($room['expires_at']) < time()) {
+        $stmt = db()->prepare("UPDATE private_rooms SET status = 'expired' WHERE id = ?");
+        $stmt->execute([$room['id']]);
+        return ['success' => true, 'has_room' => false, 'expired' => true];
+    }
+
+    if ($room['status'] === 'started') {
+        return [
+            'success' => true,
+            'has_room' => true,
+            'matched' => true,
+            'game_id' => $room['active_game_id'],
+            'opponent_name' => $room['opponent_name']
+        ];
+    }
+
+    return [
+        'success' => true,
+        'has_room' => true,
+        'matched' => false,
+        'room_id' => $room['id'],
+        'room_code' => $room['room_code'],
+        'expires_at' => $room['expires_at']
+    ];
 }

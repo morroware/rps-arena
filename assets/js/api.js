@@ -122,9 +122,27 @@ const API = {
     },
     
     // ============ Leaderboard ============
-    
+
     async getLeaderboard(sort = 'rating', limit = 10) {
         return this.get(`leaderboard.php?sort=${sort}&limit=${limit}`);
+    },
+
+    // ============ Private Games ============
+
+    async createPrivateRoom(maxRounds = 3) {
+        return this.post('private.php?action=create', { max_rounds: maxRounds });
+    },
+
+    async joinPrivateRoom(code) {
+        return this.post('private.php?action=join', { code });
+    },
+
+    async cancelPrivateRoom() {
+        return this.post('private.php?action=cancel');
+    },
+
+    async getPrivateRoomStatus() {
+        return this.get('private.php?action=status');
     }
 };
 
