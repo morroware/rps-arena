@@ -40,12 +40,12 @@ $csrfToken = generateCsrfToken();
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($user['username']) ?></span>
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="user-info-row">
                     <?= renderRankBadge($user['rating']) ?>
                     <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
                 </div>
             </div>
-            <form action="api/auth.php?action=logout" method="POST" style="display:inline;">
+            <form action="api/auth.php?action=logout" method="POST">
                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                 <button type="submit" class="btn btn-small btn-outline">Logout</button>
             </form>
@@ -79,6 +79,48 @@ $csrfToken = generateCsrfToken();
         
         <!-- Leaderboard Table -->
         <div class="leaderboard-table-container">
+            <!-- Mobile Card View -->
+            <div class="leaderboard-cards">
+                <?php if (empty($leaderboard)): ?>
+                    <div class="empty-state">
+                        <p>No players yet. Be the first to play!</p>
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($leaderboard as $index => $player): ?>
+                        <?php $rank = $index + 1; ?>
+                        <div class="leaderboard-card <?= $player['id'] == $user['id'] ? 'highlight' : '' ?>">
+                            <div class="card-rank">
+                                <?php if ($rank === 1): ?>🥇
+                                <?php elseif ($rank === 2): ?>🥈
+                                <?php elseif ($rank === 3): ?>🥉
+                                <?php else: ?><?= $rank ?>
+                                <?php endif; ?>
+                            </div>
+                            <div class="card-player">
+                                <a href="profile.php?id=<?= $player['id'] ?>"><?= e($player['username']) ?></a>
+                                <?= renderRankBadge($player['rating'], false) ?>
+                                <?php if ($player['id'] == $user['id']): ?>
+                                    <span class="you-badge">You</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="card-rating">⭐ <?= number_format($player['rating']) ?></div>
+                            <div class="card-stats">
+                                <span class="card-record">
+                                    <span class="wins"><?= $player['wins'] ?>W</span> /
+                                    <span class="losses"><?= $player['losses'] ?>L</span> /
+                                    <span class="draws"><?= $player['draws'] ?>D</span>
+                                </span>
+                                <div class="card-winrate">
+                                    <div class="card-winrate-fill" style="width: <?= $player['win_rate'] ?>%"></div>
+                                    <span class="card-winrate-text"><?= $player['win_rate'] ?>%</span>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <!-- Desktop Table View -->
             <table class="leaderboard-table">
                 <thead>
                     <tr>
@@ -116,8 +158,8 @@ $csrfToken = generateCsrfToken();
                                 <span class="rating-value">⭐ <?= number_format($player['rating']) ?></span>
                             </td>
                             <td class="col-record">
-                                <span class="wins"><?= $player['wins'] ?>W</span> / 
-                                <span class="losses"><?= $player['losses'] ?>L</span> / 
+                                <span class="wins"><?= $player['wins'] ?>W</span> /
+                                <span class="losses"><?= $player['losses'] ?>L</span> /
                                 <span class="draws"><?= $player['draws'] ?>D</span>
                             </td>
                             <td class="col-winrate">
@@ -129,7 +171,7 @@ $csrfToken = generateCsrfToken();
                             <td class="col-games"><?= number_format($player['games_played']) ?></td>
                         </tr>
                     <?php endforeach; ?>
-                    
+
                     <?php if (empty($leaderboard)): ?>
                         <tr>
                             <td colspan="6" class="empty-state">

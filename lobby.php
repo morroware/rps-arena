@@ -46,7 +46,7 @@ $csrfToken = generateCsrfToken();
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($user['username']) ?></span>
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="user-info-row">
                     <?= renderRankBadge($user['rating']) ?>
                     <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
                 </div>
@@ -56,7 +56,7 @@ $csrfToken = generateCsrfToken();
                 </div>
                 <?php endif; ?>
             </div>
-            <form action="api/auth.php?action=logout" method="POST" style="display:inline;">
+            <form action="api/auth.php?action=logout" method="POST">
                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                 <button type="submit" class="btn btn-small btn-outline">Logout</button>
             </form>
@@ -93,8 +93,8 @@ $csrfToken = generateCsrfToken();
                     </div>
 
                     <?php if ($winStreak >= 3): ?>
-                    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,107,53,0.1); border-radius: 8px; border: 1px solid rgba(255,107,53,0.3);">
-                        <span style="font-weight: 600; color: #ff6b35;">🔥 You're on fire! <?= $winStreak ?> consecutive victories!</span>
+                    <div class="streak-banner">
+                        <span>🔥 You're on fire! <?= $winStreak ?> consecutive victories!</span>
                     </div>
                     <?php endif; ?>
                 </div>
