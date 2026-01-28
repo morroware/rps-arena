@@ -78,8 +78,7 @@ function handleLogout() {
     }
     
     // Regular request - redirect
-    header('Location: ../index.php');
-    exit;
+    redirect('index.php');
 }
 
 function handleCheck() {

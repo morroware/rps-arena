@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     rating INT DEFAULT 1000,
     games_played INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_rating (rating DESC),
     INDEX idx_wins (wins DESC),
     INDEX idx_last_active (last_active)

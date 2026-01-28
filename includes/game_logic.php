@@ -149,7 +149,16 @@ function checkQueueStatus($userId) {
     // Try to find a match
     $match = tryFindMatch($userId);
     if ($match) {
-        return ['success' => true, 'matched' => true, 'game_id' => $match];
+        // Get opponent name for the match-found display
+        $stmt = db()->prepare("
+            SELECT u.username as opponent_name
+            FROM games g
+            JOIN users u ON (g.player1_id = u.id OR g.player2_id = u.id) AND u.id != ?
+            WHERE g.id = ?
+        ");
+        $stmt->execute([$userId, $match]);
+        $matchInfo = $stmt->fetch();
+        return ['success' => true, 'matched' => true, 'game_id' => $match, 'opponent_name' => $matchInfo['opponent_name'] ?? 'Opponent'];
     }
     
     // Still waiting
@@ -176,41 +185,57 @@ function getQueueCount() {
  * Try to find a match for the user
  */
 function tryFindMatch($userId) {
-    // Get user's queue entry
-    $stmt = db()->prepare("SELECT rating FROM matchmaking_queue WHERE user_id = ?");
-    $stmt->execute([$userId]);
-    $userQueue = $stmt->fetch();
-    
-    if (!$userQueue) {
-        return null;
-    }
-    
-    // Find oldest other player in queue (FIFO matching)
-    // For rating-based matching, you could add: ORDER BY ABS(rating - ?) ASC
-    $stmt = db()->prepare("
-        SELECT user_id FROM matchmaking_queue 
-        WHERE user_id != ? 
-        ORDER BY joined_at ASC 
-        LIMIT 1
-    ");
-    $stmt->execute([$userId]);
-    $opponent = $stmt->fetch();
-    
-    if (!$opponent) {
-        return null;
-    }
-    
-    // Create the game
-    $gameId = createGame($userId, $opponent['user_id']);
-    
-    if ($gameId) {
+    try {
+        db()->beginTransaction();
+
+        // Get user's queue entry with lock
+        $stmt = db()->prepare("SELECT rating FROM matchmaking_queue WHERE user_id = ? FOR UPDATE");
+        $stmt->execute([$userId]);
+        $userQueue = $stmt->fetch();
+
+        if (!$userQueue) {
+            db()->rollBack();
+            return null;
+        }
+
+        // Find oldest other player in queue with lock (FIFO matching)
+        $stmt = db()->prepare("
+            SELECT user_id FROM matchmaking_queue
+            WHERE user_id != ?
+            ORDER BY joined_at ASC
+            LIMIT 1
+            FOR UPDATE
+        ");
+        $stmt->execute([$userId]);
+        $opponent = $stmt->fetch();
+
+        if (!$opponent) {
+            db()->rollBack();
+            return null;
+        }
+
+        // Create game
+        $stmt = db()->prepare("
+            INSERT INTO games (player1_id, player2_id, max_rounds, status)
+            VALUES (?, ?, ?, 'active')
+        ");
+        $stmt->execute([$userId, $opponent['user_id'], DEFAULT_MAX_ROUNDS]);
+        $gameId = db()->lastInsertId();
+
+        // Create first round
+        $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, 1)");
+        $stmt->execute([$gameId]);
+
         // Remove both players from queue
-        leaveQueue($userId);
-        leaveQueue($opponent['user_id']);
+        $stmt = db()->prepare("DELETE FROM matchmaking_queue WHERE user_id IN (?, ?)");
+        $stmt->execute([$userId, $opponent['user_id']]);
+
+        db()->commit();
         return $gameId;
+    } catch (Exception $e) {
+        db()->rollBack();
+        return null;
     }
-    
-    return null;
 }
 
 /**
@@ -330,12 +355,12 @@ function getGameState($gameId, $userId) {
         'is_winner' => $game['winner_id'] == $userId,
         'is_draw' => $game['status'] === 'finished' && $game['winner_id'] === null,
         'rating_info' => $ratingInfo,
-        'completed_rounds' => array_map(function($r) use ($isPlayer1) {
+        'completed_rounds' => array_map(function($r) use ($isPlayer1, $userId) {
             return [
                 'round' => $r['round_number'],
                 'your_move' => $isPlayer1 ? $r['player1_move'] : $r['player2_move'],
                 'opponent_move' => $isPlayer1 ? $r['player2_move'] : $r['player1_move'],
-                'winner' => $r['is_draw'] ? 'draw' : ($r['winner_id'] == ($isPlayer1 ? $r['player1_move'] : $r['player2_move']) ? 'you' : 'opponent')
+                'winner' => $r['is_draw'] ? 'draw' : ($r['winner_id'] == $userId ? 'you' : 'opponent')
             ];
         }, $completedRounds)
     ];
@@ -517,27 +542,43 @@ function forfeitGame($gameId, $userId) {
     $stmt = db()->prepare("SELECT * FROM games WHERE id = ? AND status = 'active'");
     $stmt->execute([$gameId]);
     $game = $stmt->fetch();
-    
+
     if (!$game) {
         return ['success' => false, 'error' => 'Game not found'];
     }
-    
+
     if ($game['player1_id'] != $userId && $game['player2_id'] != $userId) {
         return ['success' => false, 'error' => 'You are not in this game'];
     }
-    
+
     // Winner is the other player
     $winnerId = ($game['player1_id'] == $userId) ? $game['player2_id'] : $game['player1_id'];
-    
-    $stmt = db()->prepare("UPDATE games SET status = 'abandoned', winner_id = ?, finished_at = NOW() WHERE id = ?");
-    $stmt->execute([$winnerId, $gameId]);
-    
-    // Update stats (forfeit counts as a loss)
-    $stmt = db()->prepare("UPDATE users SET losses = losses + 1, games_played = games_played + 1 WHERE id = ?");
-    $stmt->execute([$userId]);
-    
-    $stmt = db()->prepare("UPDATE users SET wins = wins + 1, games_played = games_played + 1 WHERE id = ?");
-    $stmt->execute([$winnerId]);
-    
+
+    db()->beginTransaction();
+    try {
+        $stmt = db()->prepare("UPDATE games SET status = 'abandoned', winner_id = ?, finished_at = NOW() WHERE id = ?");
+        $stmt->execute([$winnerId, $gameId]);
+
+        // Get player ratings for ELO calculation
+        $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
+        $stmt->execute([$userId, $winnerId]);
+        $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+        $newRatings = calculateNewRatings($players[$winnerId], $players[$userId]);
+
+        // Update loser (forfeiter)
+        $stmt = db()->prepare("UPDATE users SET losses = losses + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['loser'], $userId]);
+
+        // Update winner
+        $stmt = db()->prepare("UPDATE users SET wins = wins + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['winner'], $winnerId]);
+
+        db()->commit();
+    } catch (Exception $e) {
+        db()->rollBack();
+        return ['success' => false, 'error' => 'Failed to process forfeit'];
+    }
+
     return ['success' => true];
 }

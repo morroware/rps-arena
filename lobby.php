@@ -7,6 +7,12 @@ requireAuth();
 
 $user = getCurrentUser();
 
+// Clean up stale games/queue entries before checking active game
+cleanupStaleData();
+
+// Also remove this user from the queue (in case they navigated away mid-search)
+leaveQueue($user['id']);
+
 // Check if user is in an active game
 $activeGame = getUserActiveGame($user['id']);
 if ($activeGame) {

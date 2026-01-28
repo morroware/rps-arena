@@ -5,17 +5,20 @@
 (function() {
     'use strict';
     
-    // Close modals when clicking outside
+    // Close modals when clicking outside (skip game-critical modals)
     document.addEventListener('click', function(e) {
         if (e.target.classList.contains('modal')) {
+            // Don't dismiss game-over or match-found modals
+            if (e.target.id === 'game-over-modal' || e.target.id === 'match-found-modal') return;
             e.target.classList.add('hidden');
         }
     });
-    
-    // Close modals with Escape key
+
+    // Close modals with Escape key (skip game-critical modals)
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             document.querySelectorAll('.modal:not(.hidden)').forEach(modal => {
+                if (modal.id === 'game-over-modal' || modal.id === 'match-found-modal') return;
                 modal.classList.add('hidden');
             });
         }
