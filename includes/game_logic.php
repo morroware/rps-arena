@@ -185,57 +185,91 @@ function getQueueCount() {
  * Try to find a match for the user
  */
 function tryFindMatch($userId) {
-    try {
-        db()->beginTransaction();
+    $maxRetries = 3;
+    $attempt = 0;
 
-        // Get user's queue entry with lock
-        $stmt = db()->prepare("SELECT user_id, rating FROM matchmaking_queue WHERE user_id = ? FOR UPDATE");
-        $stmt->execute([$userId]);
-        $userQueue = $stmt->fetch();
+    while ($attempt < $maxRetries) {
+        $attempt++;
+        try {
+            db()->beginTransaction();
 
-        if (!$userQueue) {
+            // Find oldest other player in queue first (without lock to avoid deadlock)
+            $stmt = db()->prepare("
+                SELECT user_id, rating FROM matchmaking_queue
+                WHERE user_id != ?
+                ORDER BY joined_at ASC
+                LIMIT 1
+            ");
+            $stmt->execute([$userId]);
+            $potentialOpponent = $stmt->fetch();
+
+            if (!$potentialOpponent) {
+                db()->rollBack();
+                return null;
+            }
+
+            // Use consistent lock ordering: always lock lower user_id first to prevent deadlock
+            $lowerUserId = min($userId, $potentialOpponent['user_id']);
+            $higherUserId = max($userId, $potentialOpponent['user_id']);
+
+            // Lock both players in consistent order
+            $stmt = db()->prepare("
+                SELECT user_id, rating FROM matchmaking_queue
+                WHERE user_id IN (?, ?)
+                ORDER BY user_id ASC
+                FOR UPDATE
+            ");
+            $stmt->execute([$lowerUserId, $higherUserId]);
+            $lockedPlayers = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+            // Verify both players are still in queue after acquiring locks
+            if (!isset($lockedPlayers[$userId]) || !isset($lockedPlayers[$potentialOpponent['user_id']])) {
+                db()->rollBack();
+                return null; // One player left queue while we were locking
+            }
+
+            $userRating = $lockedPlayers[$userId];
+            $opponentRating = $lockedPlayers[$potentialOpponent['user_id']];
+
+            // Create game with pre-game ratings stored
+            $stmt = db()->prepare("
+                INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status)
+                VALUES (?, ?, ?, ?, ?, 'active')
+            ");
+            $stmt->execute([$userId, $potentialOpponent['user_id'], $userRating, $opponentRating, DEFAULT_MAX_ROUNDS]);
+            $gameId = db()->lastInsertId();
+
+            // Create first round
+            $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, 1)");
+            $stmt->execute([$gameId]);
+
+            // Remove both players from queue
+            $stmt = db()->prepare("DELETE FROM matchmaking_queue WHERE user_id IN (?, ?)");
+            $stmt->execute([$userId, $potentialOpponent['user_id']]);
+
+            db()->commit();
+            return $gameId;
+        } catch (PDOException $e) {
             db()->rollBack();
+
+            // Retry on deadlock or lock timeout
+            if (in_array($e->getCode(), ['1213', '1205', '40001', 1213, 1205, 40001])) {
+                error_log("tryFindMatch deadlock/timeout, attempt $attempt of $maxRetries: " . $e->getMessage());
+                if ($attempt < $maxRetries) {
+                    usleep(50000 * $attempt); // Exponential backoff: 50ms, 100ms, 150ms
+                    continue;
+                }
+            }
+            error_log("tryFindMatch error: " . $e->getMessage());
+            return null;
+        } catch (Exception $e) {
+            db()->rollBack();
+            error_log("tryFindMatch error: " . $e->getMessage());
             return null;
         }
-
-        // Find oldest other player in queue with lock (FIFO matching)
-        $stmt = db()->prepare("
-            SELECT user_id, rating FROM matchmaking_queue
-            WHERE user_id != ?
-            ORDER BY joined_at ASC
-            LIMIT 1
-            FOR UPDATE
-        ");
-        $stmt->execute([$userId]);
-        $opponent = $stmt->fetch();
-
-        if (!$opponent) {
-            db()->rollBack();
-            return null;
-        }
-
-        // Create game with pre-game ratings stored
-        $stmt = db()->prepare("
-            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status)
-            VALUES (?, ?, ?, ?, ?, 'active')
-        ");
-        $stmt->execute([$userId, $opponent['user_id'], $userQueue['rating'], $opponent['rating'], DEFAULT_MAX_ROUNDS]);
-        $gameId = db()->lastInsertId();
-
-        // Create first round
-        $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, 1)");
-        $stmt->execute([$gameId]);
-
-        // Remove both players from queue
-        $stmt = db()->prepare("DELETE FROM matchmaking_queue WHERE user_id IN (?, ?)");
-        $stmt->execute([$userId, $opponent['user_id']]);
-
-        db()->commit();
-        return $gameId;
-    } catch (Exception $e) {
-        db()->rollBack();
-        return null;
     }
+
+    return null;
 }
 
 /**
@@ -750,22 +784,49 @@ function joinPrivateRoom($userId, $code) {
     // Create the game (host is player1, joiner is player2)
     db()->beginTransaction();
     try {
+        // CRITICAL: Lock the room row to prevent race conditions
+        $stmt = db()->prepare("
+            SELECT * FROM private_rooms
+            WHERE id = ? AND status = 'waiting'
+            FOR UPDATE
+        ");
+        $stmt->execute([$matchedRoom['id']]);
+        $lockedRoom = $stmt->fetch();
+
+        // Re-check room is still available after acquiring lock
+        if (!$lockedRoom || $lockedRoom['status'] !== 'waiting') {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'Room is no longer available'];
+        }
+
+        // Check if room expired while we were waiting
+        if (strtotime($lockedRoom['expires_at']) < time()) {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'Room has expired'];
+        }
+
         // Get player ratings for pre-game storage
         $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
-        $stmt->execute([$matchedRoom['host_id'], $userId]);
+        $stmt->execute([$lockedRoom['host_id'], $userId]);
         $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+        // Verify both players exist
+        if (!isset($players[$lockedRoom['host_id']]) || !isset($players[$userId])) {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'Player not found'];
+        }
 
         $stmt = db()->prepare("
             INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
             VALUES (?, ?, ?, ?, ?, 'active', TRUE, ?)
         ");
         $stmt->execute([
-            $matchedRoom['host_id'],
+            $lockedRoom['host_id'],
             $userId,
-            $players[$matchedRoom['host_id']],
+            $players[$lockedRoom['host_id']],
             $players[$userId],
-            $matchedRoom['max_rounds'],
-            $matchedRoom['id']
+            $lockedRoom['max_rounds'],
+            $lockedRoom['id']
         ]);
         $gameId = db()->lastInsertId();
 
@@ -775,11 +836,11 @@ function joinPrivateRoom($userId, $code) {
 
         // Update room status
         $stmt = db()->prepare("UPDATE private_rooms SET status = 'started', game_id = ? WHERE id = ?");
-        $stmt->execute([$gameId, $matchedRoom['id']]);
+        $stmt->execute([$gameId, $lockedRoom['id']]);
 
         // Remove both players from matchmaking queue (safety)
         $stmt = db()->prepare("DELETE FROM matchmaking_queue WHERE user_id IN (?, ?)");
-        $stmt->execute([$matchedRoom['host_id'], $userId]);
+        $stmt->execute([$lockedRoom['host_id'], $userId]);
 
         db()->commit();
 
@@ -787,8 +848,20 @@ function joinPrivateRoom($userId, $code) {
             'success' => true,
             'game_id' => $gameId
         ];
+    } catch (PDOException $e) {
+        db()->rollBack();
+        // Log the actual error for debugging
+        error_log("joinPrivateRoom PDO error: " . $e->getMessage() . " Code: " . $e->getCode());
+
+        // Handle specific error cases
+        if ($e->getCode() == 1213 || $e->getCode() == 1205) {
+            // Deadlock or lock timeout - suggest retry
+            return ['success' => false, 'error' => 'Server busy, please try again'];
+        }
+        return ['success' => false, 'error' => 'Failed to create game: ' . $e->getMessage()];
     } catch (Exception $e) {
         db()->rollBack();
+        error_log("joinPrivateRoom error: " . $e->getMessage());
         return ['success' => false, 'error' => 'Failed to create game'];
     }
 }
