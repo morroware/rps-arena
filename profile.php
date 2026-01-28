@@ -15,6 +15,8 @@ if (!$profileUser) {
 
 $isOwnProfile = ($profileId == $currentUser['id']);
 $matches = getUserMatches($profileId, 20);
+$winStreak = getUserWinStreak($profileId);
+$rank = getPlayerRank($profileUser['rating']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -40,7 +42,10 @@ $matches = getUserMatches($profileId, 20);
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($currentUser['username']) ?></span>
-                <span class="rating">⭐ <?= number_format($currentUser['rating']) ?></span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <?= renderRankBadge($currentUser['rating']) ?>
+                    <span class="rating">⭐ <?= number_format($currentUser['rating']) ?></span>
+                </div>
             </div>
             <a href="api/auth.php?action=logout" class="btn btn-small btn-outline">Logout</a>
         </div>
@@ -49,19 +54,27 @@ $matches = getUserMatches($profileId, 20);
     <main class="profile-main">
         <!-- Profile Header -->
         <div class="profile-header">
-            <div class="profile-avatar">
-                <span class="avatar-icon">👤</span>
+            <div class="profile-avatar" style="background: linear-gradient(135deg, var(--primary), var(--accent));">
+                <span class="avatar-icon"><?= $rank['icon'] ?></span>
             </div>
             <div class="profile-info">
                 <h1><?= e($profileUser['username']) ?></h1>
-                <?php if ($isOwnProfile): ?>
-                    <span class="profile-badge">Your Profile</span>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <?= renderRankBadge($profileUser['rating']) ?>
+                    <?php if ($isOwnProfile): ?>
+                        <span class="profile-badge">Your Profile</span>
+                    <?php endif; ?>
+                </div>
+                <?php if ($winStreak >= 2): ?>
+                <div class="streak-display <?= getStreakClass($winStreak) ?>" style="margin-bottom: 8px;">
+                    🔥 <?= $winStreak ?> Win Streak
+                </div>
                 <?php endif; ?>
                 <p class="member-since">Member since <?= date('F Y', strtotime($profileUser['created_at'])) ?></p>
             </div>
             <div class="profile-rank">
                 <span class="rank-label">Global Rank</span>
-                <span class="rank-value">#<?= $profileUser['rank'] ?></span>
+                <span class="rank-value">#<?= number_format($profileUser['rank']) ?></span>
             </div>
         </div>
         

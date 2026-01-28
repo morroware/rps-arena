@@ -123,16 +123,26 @@ $csrfToken = generateCsrfToken();
             <div class="result-icon" id="result-icon">🏆</div>
             <h2 id="result-title">Victory!</h2>
             <p id="result-message">You won the match!</p>
-            
+
             <div class="final-score">
                 <span class="score"><?= e($user['username']) ?>: <span id="final-your-score">0</span></span>
                 <span class="score-divider">-</span>
                 <span class="score"><span id="final-opponent-name">Opponent</span>: <span id="final-opponent-score">0</span></span>
             </div>
-            
+
+            <div id="rating-change-display" style="margin: 1rem 0; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                <p style="margin-bottom: 0.5rem; color: var(--text-muted);">Rating Change</p>
+                <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
+                    <span id="old-rating" style="color: var(--text-muted);">1000</span>
+                    <span style="font-size: 1.5rem;">→</span>
+                    <span id="new-rating" style="font-weight: bold; font-size: 1.25rem;">1000</span>
+                    <span id="rating-diff" class="rating-change positive">+0</span>
+                </div>
+            </div>
+
             <div class="modal-actions">
                 <a href="lobby.php" class="btn btn-primary">Back to Lobby</a>
-                <button id="play-again-btn" class="btn btn-secondary">Find New Match</button>
+                <button id="play-again-btn" class="btn btn-secondary btn-glow">⚔️ Play Again</button>
             </div>
         </div>
     </div>

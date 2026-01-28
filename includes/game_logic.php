@@ -117,12 +117,17 @@ function leaveQueue($userId) {
  */
 function checkQueueStatus($userId) {
     // First check if already matched
-    $stmt = db()->prepare("SELECT id FROM games WHERE (player1_id = ? OR player2_id = ?) AND status IN ('waiting', 'active')");
-    $stmt->execute([$userId, $userId]);
+    $stmt = db()->prepare("
+        SELECT g.id, u.username as opponent_name
+        FROM games g
+        JOIN users u ON (g.player1_id = u.id OR g.player2_id = u.id) AND u.id != ?
+        WHERE (g.player1_id = ? OR g.player2_id = ?) AND g.status IN ('waiting', 'active')
+    ");
+    $stmt->execute([$userId, $userId, $userId]);
     if ($game = $stmt->fetch()) {
         // Remove from queue just in case
         leaveQueue($userId);
-        return ['success' => true, 'matched' => true, 'game_id' => $game['id']];
+        return ['success' => true, 'matched' => true, 'game_id' => $game['id'], 'opponent_name' => $game['opponent_name']];
     }
     
     // Check if still in queue
@@ -289,6 +294,25 @@ function getGameState($gameId, $userId) {
     // Only reveal opponent's move if both have played
     $showOpponentMove = ($round['player1_move'] && $round['player2_move']);
     
+    // Calculate rating change for finished games
+    $ratingInfo = null;
+    if ($game['status'] === 'finished') {
+        // Get current user rating (after game end)
+        $stmt = db()->prepare("SELECT rating FROM users WHERE id = ?");
+        $stmt->execute([$userId]);
+        $currentRating = $stmt->fetch()['rating'];
+
+        // Estimate old rating based on game outcome
+        $yourOldRating = $isPlayer1 ? $game['player1_rating'] : $game['player2_rating'];
+        $opponentOldRating = $isPlayer1 ? $game['player2_rating'] : $game['player1_rating'];
+
+        $ratingInfo = [
+            'old_rating' => $yourOldRating,
+            'new_rating' => $currentRating,
+            'change' => $currentRating - $yourOldRating
+        ];
+    }
+
     return [
         'game_id' => $game['id'],
         'status' => $game['status'],
@@ -305,6 +329,7 @@ function getGameState($gameId, $userId) {
         'winner_id' => $game['winner_id'],
         'is_winner' => $game['winner_id'] == $userId,
         'is_draw' => $game['status'] === 'finished' && $game['winner_id'] === null,
+        'rating_info' => $ratingInfo,
         'completed_rounds' => array_map(function($r) use ($isPlayer1) {
             return [
                 'round' => $r['round_number'],

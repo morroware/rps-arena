@@ -39,7 +39,10 @@ $userStats = getUserStats($user['id']);
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($user['username']) ?></span>
-                <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <?= renderRankBadge($user['rating']) ?>
+                    <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
+                </div>
             </div>
             <a href="api/auth.php?action=logout" class="btn btn-small btn-outline">Logout</a>
         </div>
@@ -58,12 +61,12 @@ $userStats = getUserStats($user['id']);
         <!-- Your Rank Card -->
         <div class="your-rank-card">
             <div class="rank-badge">
-                <span class="rank-number">#<?= $userStats['rank'] ?></span>
+                <span class="rank-number">#<?= number_format($userStats['rank']) ?></span>
             </div>
             <div class="rank-info">
-                <span class="rank-username"><?= e($user['username']) ?></span>
+                <span class="rank-username"><?= e($user['username']) ?> <?= renderRankBadge($userStats['rating']) ?></span>
                 <span class="rank-stats">
-                    ⭐ <?= number_format($userStats['rating']) ?> • 
+                    ⭐ <?= number_format($userStats['rating']) ?> •
                     <?= $userStats['wins'] ?>W / <?= $userStats['losses'] ?>L / <?= $userStats['draws'] ?>D •
                     <?= $userStats['win_rate'] ?>% Win Rate
                 </span>
@@ -100,6 +103,7 @@ $userStats = getUserStats($user['id']);
                             </td>
                             <td class="col-player">
                                 <a href="profile.php?id=<?= $player['id'] ?>"><?= e($player['username']) ?></a>
+                                <?= renderRankBadge($player['rating'], false) ?>
                                 <?php if ($player['id'] == $user['id']): ?>
                                     <span class="you-badge">You</span>
                                 <?php endif; ?>

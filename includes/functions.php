@@ -224,3 +224,113 @@ function maybeCleanup() {
         cleanupStaleData();
     }
 }
+
+/**
+ * Get player rank info based on rating
+ */
+function getPlayerRank($rating) {
+    $ranks = [
+        ['min' => 2000, 'name' => 'Legend', 'icon' => '🌟', 'class' => 'rank-legend'],
+        ['min' => 1800, 'name' => 'Grandmaster', 'icon' => '👑', 'class' => 'rank-grandmaster'],
+        ['min' => 1600, 'name' => 'Master', 'icon' => '💎', 'class' => 'rank-master'],
+        ['min' => 1400, 'name' => 'Diamond', 'icon' => '💠', 'class' => 'rank-diamond'],
+        ['min' => 1200, 'name' => 'Platinum', 'icon' => '🔷', 'class' => 'rank-platinum'],
+        ['min' => 1000, 'name' => 'Gold', 'icon' => '🥇', 'class' => 'rank-gold'],
+        ['min' => 800, 'name' => 'Silver', 'icon' => '🥈', 'class' => 'rank-silver'],
+        ['min' => 0, 'name' => 'Bronze', 'icon' => '🥉', 'class' => 'rank-bronze'],
+    ];
+
+    foreach ($ranks as $rank) {
+        if ($rating >= $rank['min']) {
+            return $rank;
+        }
+    }
+
+    return $ranks[count($ranks) - 1];
+}
+
+/**
+ * Render rank badge HTML
+ */
+function renderRankBadge($rating, $showName = true) {
+    $rank = getPlayerRank($rating);
+    $name = $showName ? ' ' . e($rank['name']) : '';
+    return '<span class="rank-badge-inline ' . $rank['class'] . '">' . $rank['icon'] . $name . '</span>';
+}
+
+/**
+ * Get user's win streak
+ */
+function getUserWinStreak($userId) {
+    $stmt = db()->prepare("
+        SELECT winner_id, player1_id, player2_id
+        FROM games
+        WHERE (player1_id = ? OR player2_id = ?) AND status = 'finished'
+        ORDER BY finished_at DESC
+        LIMIT 20
+    ");
+    $stmt->execute([$userId, $userId]);
+    $games = $stmt->fetchAll();
+
+    $streak = 0;
+    foreach ($games as $game) {
+        if ($game['winner_id'] == $userId) {
+            $streak++;
+        } else {
+            break;
+        }
+    }
+
+    return $streak;
+}
+
+/**
+ * Get streak display class
+ */
+function getStreakClass($streak) {
+    if ($streak >= 5) return 'on-fire';
+    if ($streak >= 3) return 'hot';
+    return '';
+}
+
+/**
+ * Format rating change for display
+ */
+function formatRatingChange($oldRating, $newRating) {
+    $diff = $newRating - $oldRating;
+    if ($diff > 0) {
+        return '<span class="rating-change positive">+' . $diff . ' ▲</span>';
+    } elseif ($diff < 0) {
+        return '<span class="rating-change negative">' . $diff . ' ▼</span>';
+    }
+    return '<span class="rating-change">±0</span>';
+}
+
+/**
+ * Get motivational message based on performance
+ */
+function getMotivationalMessage($isWinner, $streak = 0) {
+    if ($isWinner) {
+        $messages = [
+            'Great victory!',
+            'Excellent strategy!',
+            'You crushed it!',
+            'Dominant performance!',
+            'Keep up the momentum!'
+        ];
+        if ($streak >= 5) {
+            return '🔥 UNSTOPPABLE! ' . $streak . ' wins in a row! 🔥';
+        } elseif ($streak >= 3) {
+            return '🎯 Hot streak! ' . $streak . ' consecutive victories!';
+        }
+    } else {
+        $messages = [
+            'Better luck next time!',
+            'Learn from this defeat!',
+            'Stay focused, you got this!',
+            'Every loss is a lesson!',
+            'Comeback time!'
+        ];
+    }
+    return $messages[array_rand($messages)];
+}

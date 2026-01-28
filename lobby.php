@@ -24,6 +24,7 @@ $csrfToken = generateCsrfToken();
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body class="lobby-page">
+    <?php $winStreak = getUserWinStreak($user['id']); ?>
     <header class="main-header">
         <div class="header-left">
             <a href="lobby.php" class="logo">
@@ -39,7 +40,15 @@ $csrfToken = generateCsrfToken();
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($user['username']) ?></span>
-                <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <?= renderRankBadge($user['rating']) ?>
+                    <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
+                </div>
+                <?php if ($winStreak >= 2): ?>
+                <div class="streak-display <?= getStreakClass($winStreak) ?>">
+                    🔥 <?= $winStreak ?> Win Streak
+                </div>
+                <?php endif; ?>
             </div>
             <a href="api/auth.php?action=logout" class="btn btn-small btn-outline">Logout</a>
         </div>
@@ -50,28 +59,35 @@ $csrfToken = generateCsrfToken();
             <!-- Matchmaking Section -->
             <section class="matchmaking-section">
                 <div class="matchmaking-card">
-                    <h2>Find a Match</h2>
-                    <p>Join the queue to battle another player!</p>
-                    
+                    <h2>⚔️ Battle Arena ⚔️</h2>
+                    <p>Challenge players worldwide in epic Rock Paper Scissors battles!</p>
+
                     <div id="queue-status" class="queue-status hidden">
-                        <div class="searching-animation">
+                        <div class="searching-animation queue-pulse">
                             <div class="pulse-ring"></div>
+                            <div class="pulse-ring" style="animation-delay: 0.5s;"></div>
                             <span class="search-icon">🔍</span>
                         </div>
-                        <p class="status-text">Searching for opponent...</p>
-                        <p class="wait-time">Wait time: <span id="wait-time">0</span>s</p>
-                        <p class="players-waiting"><span id="players-waiting">0</span> players in queue</p>
+                        <p class="status-text">⚡ Searching for a worthy opponent...</p>
+                        <p class="wait-time">Time elapsed: <span id="wait-time">0</span>s</p>
+                        <p class="players-waiting">🎮 <span id="players-waiting">0</span> warriors in queue</p>
                     </div>
-                    
+
                     <div id="queue-actions">
-                        <button id="join-queue-btn" class="btn btn-primary btn-large">
+                        <button id="join-queue-btn" class="btn btn-primary btn-large btn-glow">
                             <span class="btn-icon">⚔️</span>
-                            Find Match
+                            Enter the Arena
                         </button>
                         <button id="leave-queue-btn" class="btn btn-secondary btn-large hidden">
-                            Cancel Search
+                            🚪 Leave Queue
                         </button>
                     </div>
+
+                    <?php if ($winStreak >= 3): ?>
+                    <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(255,107,53,0.1); border-radius: 8px; border: 1px solid rgba(255,107,53,0.3);">
+                        <span style="font-weight: 600; color: #ff6b35;">🔥 You're on fire! <?= $winStreak ?> consecutive victories!</span>
+                    </div>
+                    <?php endif; ?>
                 </div>
                 
                 <div class="quick-stats">
