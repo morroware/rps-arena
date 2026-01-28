@@ -43,12 +43,12 @@ $csrfToken = generateCsrfToken();
         <div class="header-right">
             <div class="user-info">
                 <span class="username"><?= e($currentUser['username']) ?></span>
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="user-info-row">
                     <?= renderRankBadge($currentUser['rating']) ?>
                     <span class="rating">⭐ <?= number_format($currentUser['rating']) ?></span>
                 </div>
             </div>
-            <form action="api/auth.php?action=logout" method="POST" style="display:inline;">
+            <form action="api/auth.php?action=logout" method="POST">
                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                 <button type="submit" class="btn btn-small btn-outline">Logout</button>
             </form>
@@ -58,19 +58,19 @@ $csrfToken = generateCsrfToken();
     <main class="profile-main">
         <!-- Profile Header -->
         <div class="profile-header">
-            <div class="profile-avatar" style="background: linear-gradient(135deg, var(--primary), var(--accent));">
+            <div class="profile-avatar">
                 <span class="avatar-icon"><?= $rank['icon'] ?></span>
             </div>
             <div class="profile-info">
                 <h1><?= e($profileUser['username']) ?></h1>
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <div class="profile-badge-row">
                     <?= renderRankBadge($profileUser['rating']) ?>
                     <?php if ($isOwnProfile): ?>
                         <span class="profile-badge">Your Profile</span>
                     <?php endif; ?>
                 </div>
                 <?php if ($winStreak >= 2): ?>
-                <div class="streak-display <?= getStreakClass($winStreak) ?>" style="margin-bottom: 8px;">
+                <div class="streak-display <?= getStreakClass($winStreak) ?>">
                     🔥 <?= $winStreak ?> Win Streak
                 </div>
                 <?php endif; ?>

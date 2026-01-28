@@ -130,12 +130,12 @@ $csrfToken = generateCsrfToken();
                 <span class="score"><span id="final-opponent-name">Opponent</span>: <span id="final-opponent-score">0</span></span>
             </div>
 
-            <div id="rating-change-display" style="margin: 1rem 0; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                <p style="margin-bottom: 0.5rem; color: var(--text-muted);">Rating Change</p>
-                <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
-                    <span id="old-rating" style="color: var(--text-muted);">1000</span>
-                    <span style="font-size: 1.5rem;">→</span>
-                    <span id="new-rating" style="font-weight: bold; font-size: 1.25rem;">1000</span>
+            <div id="rating-change-display" class="rating-change-display">
+                <p>Rating Change</p>
+                <div class="rating-change-row">
+                    <span id="old-rating" class="text-muted">1000</span>
+                    <span class="rating-arrow">→</span>
+                    <span id="new-rating" class="new-rating-value">1000</span>
                     <span id="rating-diff" class="rating-change positive">+0</span>
                 </div>
             </div>
