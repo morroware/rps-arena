@@ -210,8 +210,22 @@ function siteUrl($path = '') {
 
 /**
  * Redirect helper
+ * Handles relative paths (lobby.php), absolute paths (/rps/lobby.php), and full URLs
  */
 function redirect($path) {
+    // Full URL - use as-is
+    if (preg_match('#^https?://#i', $path)) {
+        header('Location: ' . $path);
+        exit;
+    }
+
+    // Absolute path (starts with /) - use as-is, it already includes the subdirectory
+    if (strpos($path, '/') === 0) {
+        header('Location: ' . $path);
+        exit;
+    }
+
+    // Relative path (e.g. "lobby.php") - prepend site URL
     header('Location: ' . siteUrl($path));
     exit;
 }
