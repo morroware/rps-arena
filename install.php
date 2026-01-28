@@ -39,9 +39,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->exec("CREATE DATABASE IF NOT EXISTS `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
             $pdo->exec("USE `$dbName`");
             
-            // Run schema
+            // Run schema - execute statements individually for compatibility
             $schema = file_get_contents(__DIR__ . '/sql/schema.sql');
-            $pdo->exec($schema);
+            $statements = array_filter(array_map('trim', explode(';', $schema)));
+            foreach ($statements as $statement) {
+                if (!empty($statement)) {
+                    $pdo->exec($statement);
+                }
+            }
             
             // Create config file
             $configTemplate = file_get_contents(__DIR__ . '/includes/config.template.php');
