@@ -10,6 +10,7 @@
     let gameState = null;
     let pollInterval = null;
     let hasSubmittedMove = false;
+    let isSubmittingMove = false;  // Prevents race condition during move submission
     let lastRoundNumber = 0;
     let countdownInterval = null;
     let countdownSeconds = 30;
@@ -327,7 +328,9 @@
     // ============ Move Handling ============
 
     async function handleMoveSelection(move) {
-        if (hasSubmittedMove || !gameState || gameState.status !== 'active') return;
+        // Prevent race condition: check both flags and set submitting flag atomically
+        if (hasSubmittedMove || isSubmittingMove || !gameState || gameState.status !== 'active') return;
+        isSubmittingMove = true;  // Lock to prevent concurrent submissions
 
         stopCountdown();
 
@@ -361,6 +364,7 @@
             }
         } catch (error) {
             alert('Failed to submit move: ' + error.message);
+            isSubmittingMove = false;  // Reset flag on error to allow retry
             moveButtons.forEach(btn => {
                 btn.disabled = false;
                 btn.classList.remove('selected');
@@ -390,6 +394,7 @@
     function showMoveSelection() {
         moveSelection.classList.remove('hidden');
         waitingIndicator.classList.add('hidden');
+        isSubmittingMove = false;  // Reset submission lock for new round
         moveButtons.forEach(btn => {
             btn.disabled = false;
             btn.classList.remove('selected');
