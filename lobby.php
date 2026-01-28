@@ -95,7 +95,43 @@ $csrfToken = generateCsrfToken();
                     </div>
                     <?php endif; ?>
                 </div>
-                
+
+                <!-- Private Game Section -->
+                <div class="private-game-card">
+                    <h3>🔒 Private Game</h3>
+                    <p>Play with a friend using a room code.</p>
+
+                    <div class="private-game-actions" id="private-actions">
+                        <button id="create-room-btn" class="btn btn-secondary">
+                            Create Room
+                        </button>
+
+                        <div class="join-room-form">
+                            <input type="text" id="room-code-input" placeholder="Enter code"
+                                   maxlength="6" class="form-input room-code-input"
+                                   autocomplete="off" autocapitalize="characters">
+                            <button id="join-room-btn" class="btn btn-primary">
+                                Join
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Shown after creating a room -->
+                    <div id="room-waiting" class="room-waiting hidden">
+                        <div class="room-code-display">
+                            <p>Share this code with your opponent:</p>
+                            <div class="code-box" id="room-code-value">------</div>
+                            <button id="copy-code-btn" class="btn btn-small btn-outline">Copy Code</button>
+                        </div>
+                        <div class="room-status">
+                            <div class="spinner"></div>
+                            <p class="status-text">Waiting for opponent to join...</p>
+                        </div>
+                        <p class="expire-text">Room expires in <span id="room-timer">10:00</span></p>
+                        <button id="cancel-room-btn" class="btn btn-small btn-danger">Cancel Room</button>
+                    </div>
+                </div>
+
                 <div class="quick-stats">
                     <div class="stat">
                         <span class="stat-value"><?= number_format($user['wins']) ?></span>

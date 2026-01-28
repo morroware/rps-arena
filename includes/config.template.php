@@ -25,6 +25,11 @@ define('MOVE_TIMEOUT_SECONDS', 30);     // Seconds to make a move
 define('QUEUE_TIMEOUT_SECONDS', 300);   // 5 minutes max in queue
 define('ONLINE_THRESHOLD_SECONDS', 300); // Consider online if active within 5 min
 
+// Private Games
+define('PRIVATE_ROOM_TIMEOUT_SECONDS', 600); // 10 minutes to join
+define('PRIVATE_ROOM_CODE_LENGTH', 6);       // Length of generated codes
+define('PRIVATE_ROOM_MAX_ACTIVE', 1);        // Max active rooms per user
+
 // Rating System (Simple ELO)
 define('RATING_K_FACTOR', 32);          // How much ratings change per game
 define('RATING_START', 1000);           // Starting rating for new players

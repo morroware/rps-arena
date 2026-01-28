@@ -37,10 +37,14 @@ CREATE TABLE IF NOT EXISTS games (
     player2_id INT NOT NULL,
     player1_score INT DEFAULT 0,
     player2_score INT DEFAULT 0,
+    player1_rating_start INT DEFAULT NULL,
+    player2_rating_start INT DEFAULT NULL,
     current_round INT DEFAULT 1,
     max_rounds INT DEFAULT 3,
     status ENUM('waiting', 'active', 'finished', 'abandoned') DEFAULT 'waiting',
     winner_id INT DEFAULT NULL,
+    is_private BOOLEAN DEFAULT FALSE,
+    private_room_id INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     finished_at TIMESTAMP NULL,
     FOREIGN KEY (player1_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -90,6 +94,25 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     INDEX idx_token (token_hash),
+    INDEX idx_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Private game rooms
+CREATE TABLE IF NOT EXISTS private_rooms (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    host_id INT NOT NULL,
+    room_code VARCHAR(20) NOT NULL,
+    code_hash VARCHAR(255) NOT NULL,
+    max_rounds INT DEFAULT 3,
+    game_id INT DEFAULT NULL,
+    status ENUM('waiting', 'started', 'expired') DEFAULT 'waiting',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (host_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL,
+    INDEX idx_code_hash (code_hash),
+    INDEX idx_host (host_id),
+    INDEX idx_status (status),
     INDEX idx_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
