@@ -17,6 +17,7 @@ $isOwnProfile = ($profileId == $currentUser['id']);
 $matches = getUserMatches($profileId, 20);
 $winStreak = getUserWinStreak($profileId);
 $rank = getPlayerRank($profileUser['rating']);
+$csrfToken = generateCsrfToken();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -47,7 +48,10 @@ $rank = getPlayerRank($profileUser['rating']);
                     <span class="rating">⭐ <?= number_format($currentUser['rating']) ?></span>
                 </div>
             </div>
-            <a href="api/auth.php?action=logout" class="btn btn-small btn-outline">Logout</a>
+            <form action="api/auth.php?action=logout" method="POST" style="display:inline;">
+                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                <button type="submit" class="btn btn-small btn-outline">Logout</button>
+            </form>
         </div>
     </header>
     

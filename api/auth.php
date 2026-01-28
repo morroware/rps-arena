@@ -70,13 +70,18 @@ function handleRegister() {
 }
 
 function handleLogout() {
+    // Require POST method for logout to prevent CSRF
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonResponse(['success' => false, 'error' => 'POST method required'], 405);
+    }
+
     logoutUser();
-    
+
     // Check if AJAX request
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
         jsonResponse(['success' => true]);
     }
-    
+
     // Regular request - redirect
     redirect('index.php');
 }

@@ -26,10 +26,10 @@ switch ($action) {
 }
 
 function handleGetState($userId) {
-    $gameId = $_GET['id'] ?? 0;
-    
-    if (!$gameId) {
-        jsonResponse(['success' => false, 'error' => 'Game ID required'], 400);
+    $gameId = filter_var($_GET['id'] ?? 0, FILTER_VALIDATE_INT);
+
+    if (!$gameId || $gameId < 1) {
+        jsonResponse(['success' => false, 'error' => 'Valid Game ID required'], 400);
     }
     
     $state = getGameState($gameId, $userId);
@@ -43,11 +43,11 @@ function handleGetState($userId) {
 
 function handleSubmitMove($userId) {
     $data = getPostData();
-    $gameId = $data['game_id'] ?? 0;
+    $gameId = filter_var($data['game_id'] ?? 0, FILTER_VALIDATE_INT);
     $move = $data['move'] ?? '';
-    
-    if (!$gameId || !$move) {
-        jsonResponse(['success' => false, 'error' => 'Game ID and move required'], 400);
+
+    if (!$gameId || $gameId < 1 || !$move) {
+        jsonResponse(['success' => false, 'error' => 'Valid Game ID and move required'], 400);
     }
     
     $result = submitMove($gameId, $userId, $move);
@@ -63,10 +63,10 @@ function handleSubmitMove($userId) {
 
 function handleForfeit($userId) {
     $data = getPostData();
-    $gameId = $data['game_id'] ?? $_GET['id'] ?? 0;
-    
-    if (!$gameId) {
-        jsonResponse(['success' => false, 'error' => 'Game ID required'], 400);
+    $gameId = filter_var($data['game_id'] ?? $_GET['id'] ?? 0, FILTER_VALIDATE_INT);
+
+    if (!$gameId || $gameId < 1) {
+        jsonResponse(['success' => false, 'error' => 'Valid Game ID required'], 400);
     }
     
     $result = forfeitGame($gameId, $userId);

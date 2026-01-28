@@ -395,160 +395,199 @@ function submitMove($gameId, $userId, $move) {
     if (!in_array($move, $validMoves)) {
         return ['success' => false, 'error' => 'Invalid move'];
     }
-    
-    // Get game
-    $stmt = db()->prepare("SELECT * FROM games WHERE id = ? AND status = 'active'");
-    $stmt->execute([$gameId]);
-    $game = $stmt->fetch();
-    
-    if (!$game) {
-        return ['success' => false, 'error' => 'Game not found or not active'];
+
+    try {
+        db()->beginTransaction();
+
+        // Get game with lock to prevent race conditions
+        $stmt = db()->prepare("SELECT * FROM games WHERE id = ? AND status = 'active' FOR UPDATE");
+        $stmt->execute([$gameId]);
+        $game = $stmt->fetch();
+
+        if (!$game) {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'Game not found or not active'];
+        }
+
+        // Determine which player
+        $isPlayer1 = ($game['player1_id'] == $userId);
+        $isPlayer2 = ($game['player2_id'] == $userId);
+
+        if (!$isPlayer1 && !$isPlayer2) {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'You are not in this game'];
+        }
+
+        $moveColumn = $isPlayer1 ? 'player1_move' : 'player2_move';
+
+        // Check if already moved this round (with lock)
+        $stmt = db()->prepare("SELECT * FROM game_rounds WHERE game_id = ? AND round_number = ? FOR UPDATE");
+        $stmt->execute([$gameId, $game['current_round']]);
+        $round = $stmt->fetch();
+
+        if ($round[$moveColumn] !== null) {
+            db()->rollBack();
+            return ['success' => false, 'error' => 'Already submitted move for this round'];
+        }
+
+        // Submit the move
+        $stmt = db()->prepare("UPDATE game_rounds SET $moveColumn = ? WHERE game_id = ? AND round_number = ?");
+        $stmt->execute([$move, $gameId, $game['current_round']]);
+
+        // Re-fetch round to check if both players have moved
+        $stmt = db()->prepare("SELECT * FROM game_rounds WHERE game_id = ? AND round_number = ?");
+        $stmt->execute([$gameId, $game['current_round']]);
+        $round = $stmt->fetch();
+
+        if ($round['player1_move'] && $round['player2_move']) {
+            // Both moved - resolve the round (within the same transaction)
+            resolveRoundInTransaction($game, $round);
+        }
+
+        db()->commit();
+        return ['success' => true];
+    } catch (Exception $e) {
+        db()->rollBack();
+        return ['success' => false, 'error' => 'Failed to submit move. Please try again.'];
     }
-    
-    // Determine which player
-    $isPlayer1 = ($game['player1_id'] == $userId);
-    $isPlayer2 = ($game['player2_id'] == $userId);
-    
-    if (!$isPlayer1 && !$isPlayer2) {
-        return ['success' => false, 'error' => 'You are not in this game'];
-    }
-    
-    $moveColumn = $isPlayer1 ? 'player1_move' : 'player2_move';
-    
-    // Check if already moved this round
-    $stmt = db()->prepare("SELECT * FROM game_rounds WHERE game_id = ? AND round_number = ?");
-    $stmt->execute([$gameId, $game['current_round']]);
-    $round = $stmt->fetch();
-    
-    if ($round[$moveColumn] !== null) {
-        return ['success' => false, 'error' => 'Already submitted move for this round'];
-    }
-    
-    // Submit the move
-    $stmt = db()->prepare("UPDATE game_rounds SET $moveColumn = ? WHERE game_id = ? AND round_number = ?");
-    $stmt->execute([$move, $gameId, $game['current_round']]);
-    
-    // Check if both players have moved
-    $stmt = db()->prepare("SELECT * FROM game_rounds WHERE game_id = ? AND round_number = ?");
-    $stmt->execute([$gameId, $game['current_round']]);
-    $round = $stmt->fetch();
-    
-    if ($round['player1_move'] && $round['player2_move']) {
-        // Both moved - resolve the round
-        resolveRound($game, $round);
-    }
-    
-    return ['success' => true];
 }
 
 /**
- * Resolve a completed round
+ * Resolve a completed round (within an existing transaction)
+ * This version assumes a transaction is already active
  */
-function resolveRound($game, $round) {
+function resolveRoundInTransaction($game, $round) {
     $winnerId = determineRoundWinner(
-        $round['player1_move'], 
+        $round['player1_move'],
         $round['player2_move'],
         $game['player1_id'],
         $game['player2_id']
     );
-    
+
     $isDraw = ($winnerId === null);
-    
+
     // Update round
     $stmt = db()->prepare("UPDATE game_rounds SET winner_id = ?, is_draw = ?, completed_at = NOW() WHERE id = ?");
     $stmt->execute([$winnerId, $isDraw ? 1 : 0, $round['id']]);
-    
+
     // Update game scores
     if (!$isDraw) {
         $scoreColumn = ($winnerId == $game['player1_id']) ? 'player1_score' : 'player2_score';
         $stmt = db()->prepare("UPDATE games SET $scoreColumn = $scoreColumn + 1 WHERE id = ?");
         $stmt->execute([$game['id']]);
     }
-    
-    // Check if game is over
-    checkGameEnd($game['id']);
+
+    // Check if game is over (within transaction)
+    checkGameEndInTransaction($game['id']);
 }
 
 /**
- * Check if game should end
+ * Resolve a completed round (standalone with transaction wrapper)
+ * @deprecated Use resolveRoundInTransaction within submitMove's transaction instead
  */
-function checkGameEnd($gameId) {
+function resolveRound($game, $round) {
+    try {
+        db()->beginTransaction();
+        resolveRoundInTransaction($game, $round);
+        db()->commit();
+    } catch (Exception $e) {
+        db()->rollBack();
+        throw $e;
+    }
+}
+
+/**
+ * Check if game should end (within an existing transaction)
+ */
+function checkGameEndInTransaction($gameId) {
     $stmt = db()->prepare("SELECT * FROM games WHERE id = ?");
     $stmt->execute([$gameId]);
     $game = $stmt->fetch();
-    
+
     $winsNeeded = ceil($game['max_rounds'] / 2);
-    
+
     // Check for winner
     if ($game['player1_score'] >= $winsNeeded) {
-        endGame($gameId, $game['player1_id']);
+        endGameInTransaction($gameId, $game['player1_id']);
     } elseif ($game['player2_score'] >= $winsNeeded) {
-        endGame($gameId, $game['player2_id']);
+        endGameInTransaction($gameId, $game['player2_id']);
     } elseif ($game['current_round'] >= $game['max_rounds']) {
         // All rounds played - check final scores
         if ($game['player1_score'] > $game['player2_score']) {
-            endGame($gameId, $game['player1_id']);
+            endGameInTransaction($gameId, $game['player1_id']);
         } elseif ($game['player2_score'] > $game['player1_score']) {
-            endGame($gameId, $game['player2_id']);
+            endGameInTransaction($gameId, $game['player2_id']);
         } else {
             // True draw
-            endGame($gameId, null);
+            endGameInTransaction($gameId, null);
         }
     } else {
         // Start next round
         $nextRound = $game['current_round'] + 1;
         $stmt = db()->prepare("UPDATE games SET current_round = ? WHERE id = ?");
         $stmt->execute([$nextRound, $gameId]);
-        
+
         $stmt = db()->prepare("INSERT INTO game_rounds (game_id, round_number) VALUES (?, ?)");
         $stmt->execute([$gameId, $nextRound]);
     }
 }
 
 /**
- * End a game
+ * Check if game should end (standalone)
+ */
+function checkGameEnd($gameId) {
+    checkGameEndInTransaction($gameId);
+}
+
+/**
+ * End a game (within an existing transaction)
+ */
+function endGameInTransaction($gameId, $winnerId) {
+    // Get game details
+    $stmt = db()->prepare("SELECT * FROM games WHERE id = ?");
+    $stmt->execute([$gameId]);
+    $game = $stmt->fetch();
+
+    // Get player ratings
+    $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
+    $stmt->execute([$game['player1_id'], $game['player2_id']]);
+    $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    // Update game status
+    $stmt = db()->prepare("UPDATE games SET status = 'finished', winner_id = ?, finished_at = NOW() WHERE id = ?");
+    $stmt->execute([$winnerId, $gameId]);
+
+    if ($winnerId !== null) {
+        // There's a winner
+        $loserId = ($winnerId == $game['player1_id']) ? $game['player2_id'] : $game['player1_id'];
+        $newRatings = calculateNewRatings($players[$winnerId], $players[$loserId]);
+
+        // Update winner
+        $stmt = db()->prepare("UPDATE users SET wins = wins + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['winner'], $winnerId]);
+
+        // Update loser
+        $stmt = db()->prepare("UPDATE users SET losses = losses + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['loser'], $loserId]);
+    } else {
+        // Draw
+        $newRatings = calculateDrawRatings($players[$game['player1_id']], $players[$game['player2_id']]);
+
+        $stmt = db()->prepare("UPDATE users SET draws = draws + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['player1'], $game['player1_id']]);
+
+        $stmt = db()->prepare("UPDATE users SET draws = draws + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
+        $stmt->execute([$newRatings['player2'], $game['player2_id']]);
+    }
+}
+
+/**
+ * End a game (standalone with transaction wrapper)
  */
 function endGame($gameId, $winnerId) {
-    db()->beginTransaction();
-    
     try {
-        // Get game details
-        $stmt = db()->prepare("SELECT * FROM games WHERE id = ?");
-        $stmt->execute([$gameId]);
-        $game = $stmt->fetch();
-        
-        // Get player ratings
-        $stmt = db()->prepare("SELECT id, rating FROM users WHERE id IN (?, ?)");
-        $stmt->execute([$game['player1_id'], $game['player2_id']]);
-        $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
-        
-        // Update game status
-        $stmt = db()->prepare("UPDATE games SET status = 'finished', winner_id = ?, finished_at = NOW() WHERE id = ?");
-        $stmt->execute([$winnerId, $gameId]);
-        
-        if ($winnerId !== null) {
-            // There's a winner
-            $loserId = ($winnerId == $game['player1_id']) ? $game['player2_id'] : $game['player1_id'];
-            $newRatings = calculateNewRatings($players[$winnerId], $players[$loserId]);
-            
-            // Update winner
-            $stmt = db()->prepare("UPDATE users SET wins = wins + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
-            $stmt->execute([$newRatings['winner'], $winnerId]);
-            
-            // Update loser
-            $stmt = db()->prepare("UPDATE users SET losses = losses + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
-            $stmt->execute([$newRatings['loser'], $loserId]);
-        } else {
-            // Draw
-            $newRatings = calculateDrawRatings($players[$game['player1_id']], $players[$game['player2_id']]);
-            
-            $stmt = db()->prepare("UPDATE users SET draws = draws + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
-            $stmt->execute([$newRatings['player1'], $game['player1_id']]);
-            
-            $stmt = db()->prepare("UPDATE users SET draws = draws + 1, games_played = games_played + 1, rating = ? WHERE id = ?");
-            $stmt->execute([$newRatings['player2'], $game['player2_id']]);
-        }
-        
+        db()->beginTransaction();
+        endGameInTransaction($gameId, $winnerId);
         db()->commit();
     } catch (Exception $e) {
         db()->rollBack();

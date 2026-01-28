@@ -14,6 +14,7 @@ if (!in_array($sortBy, $validSorts)) {
 
 $leaderboard = getLeaderboard($sortBy, 100);
 $userStats = getUserStats($user['id']);
+$csrfToken = generateCsrfToken();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -44,7 +45,10 @@ $userStats = getUserStats($user['id']);
                     <span class="rating">⭐ <?= number_format($user['rating']) ?></span>
                 </div>
             </div>
-            <a href="api/auth.php?action=logout" class="btn btn-small btn-outline">Logout</a>
+            <form action="api/auth.php?action=logout" method="POST" style="display:inline;">
+                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                <button type="submit" class="btn btn-small btn-outline">Logout</button>
+            </form>
         </div>
     </header>
     
