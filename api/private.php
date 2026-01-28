@@ -49,7 +49,9 @@ function handleJoin($userId) {
         jsonResponse(['success' => false, 'error' => 'Room code required'], 400);
     }
 
+    error_log("Private room join attempt: user=$userId, code=$code");
     $result = joinPrivateRoom($userId, $code);
+    error_log("Private room join result: " . json_encode($result));
     jsonResponse($result, $result['success'] ? 200 : 400);
 }
 

@@ -16,21 +16,33 @@ const API = {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         };
-        
+
         const config = { ...defaults, ...options };
-        
+
         if (config.body && typeof config.body === 'object') {
             config.body = JSON.stringify(config.body);
         }
-        
+
         try {
             const response = await fetch(url, config);
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Request failed');
+
+            // Try to parse JSON, but handle non-JSON responses
+            let data;
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                const text = await response.text();
+                console.error('Non-JSON response:', text);
+                data = { error: 'Server error: ' + (text.substring(0, 100) || 'Unknown error') };
             }
-            
+
+            if (!response.ok) {
+                const errorMsg = data.error || `Request failed (${response.status})`;
+                console.error('API Error Response:', response.status, data);
+                throw new Error(errorMsg);
+            }
+
             return data;
         } catch (error) {
             console.error('API Error:', error);
