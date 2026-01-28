@@ -65,12 +65,31 @@ function calculateNewRatings($winnerRating, $loserRating) {
  */
 function calculateDrawRatings($rating1, $rating2) {
     $avgRating = ($rating1 + $rating2) / 2;
-    
+
     // Move 10% toward average
     $new1 = round($rating1 + ($avgRating - $rating1) * 0.1);
     $new2 = round($rating2 + ($avgRating - $rating2) * 0.1);
-    
+
     return ['player1' => $new1, 'player2' => $new2];
+}
+
+/**
+ * Check if games table has rating start columns (for backwards compatibility)
+ */
+function checkGamesTableHasRatingColumns() {
+    static $hasColumns = null;
+    if ($hasColumns !== null) {
+        return $hasColumns;
+    }
+
+    try {
+        $stmt = db()->query("SHOW COLUMNS FROM games LIKE 'player1_rating_start'");
+        $hasColumns = ($stmt->fetch() !== false);
+    } catch (Exception $e) {
+        $hasColumns = false;
+    }
+
+    return $hasColumns;
 }
 
 /**
@@ -231,12 +250,20 @@ function tryFindMatch($userId) {
             $userRating = $lockedPlayers[$userId];
             $opponentRating = $lockedPlayers[$potentialOpponent['user_id']];
 
-            // Create game with pre-game ratings stored
-            $stmt = db()->prepare("
-                INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status)
-                VALUES (?, ?, ?, ?, ?, 'active')
-            ");
-            $stmt->execute([$userId, $potentialOpponent['user_id'], $userRating, $opponentRating, DEFAULT_MAX_ROUNDS]);
+            // Create game (check if rating columns exist for backwards compatibility)
+            if (checkGamesTableHasRatingColumns()) {
+                $stmt = db()->prepare("
+                    INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status)
+                    VALUES (?, ?, ?, ?, ?, 'active')
+                ");
+                $stmt->execute([$userId, $potentialOpponent['user_id'], $userRating, $opponentRating, DEFAULT_MAX_ROUNDS]);
+            } else {
+                $stmt = db()->prepare("
+                    INSERT INTO games (player1_id, player2_id, max_rounds, status)
+                    VALUES (?, ?, ?, 'active')
+                ");
+                $stmt->execute([$userId, $potentialOpponent['user_id'], DEFAULT_MAX_ROUNDS]);
+            }
             $gameId = db()->lastInsertId();
 
             // Create first round
@@ -288,20 +315,34 @@ function createGame($player1Id, $player2Id, $maxRounds = null, $isPrivate = fals
         $stmt->execute([$player1Id, $player2Id]);
         $players = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
-        // Create game with pre-game ratings stored
-        $stmt = db()->prepare("
-            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
-            VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
-        ");
-        $stmt->execute([
-            $player1Id,
-            $player2Id,
-            $players[$player1Id],
-            $players[$player2Id],
-            $maxRounds,
-            $isPrivate ? 1 : 0,
-            $privateRoomId
-        ]);
+        // Check if rating columns exist (for backwards compatibility)
+        if (checkGamesTableHasRatingColumns()) {
+            $stmt = db()->prepare("
+                INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
+                VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+            ");
+            $stmt->execute([
+                $player1Id,
+                $player2Id,
+                $players[$player1Id],
+                $players[$player2Id],
+                $maxRounds,
+                $isPrivate ? 1 : 0,
+                $privateRoomId
+            ]);
+        } else {
+            $stmt = db()->prepare("
+                INSERT INTO games (player1_id, player2_id, max_rounds, status, is_private, private_room_id)
+                VALUES (?, ?, ?, 'active', ?, ?)
+            ");
+            $stmt->execute([
+                $player1Id,
+                $player2Id,
+                $maxRounds,
+                $isPrivate ? 1 : 0,
+                $privateRoomId
+            ]);
+        }
         $gameId = db()->lastInsertId();
 
         // Create first round
@@ -816,18 +857,32 @@ function joinPrivateRoom($userId, $code) {
             return ['success' => false, 'error' => 'Player not found'];
         }
 
-        $stmt = db()->prepare("
-            INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
-            VALUES (?, ?, ?, ?, ?, 'active', TRUE, ?)
-        ");
-        $stmt->execute([
-            $lockedRoom['host_id'],
-            $userId,
-            $players[$lockedRoom['host_id']],
-            $players[$userId],
-            $lockedRoom['max_rounds'],
-            $lockedRoom['id']
-        ]);
+        // Check if rating columns exist (for backwards compatibility with older databases)
+        if (checkGamesTableHasRatingColumns()) {
+            $stmt = db()->prepare("
+                INSERT INTO games (player1_id, player2_id, player1_rating_start, player2_rating_start, max_rounds, status, is_private, private_room_id)
+                VALUES (?, ?, ?, ?, ?, 'active', TRUE, ?)
+            ");
+            $stmt->execute([
+                $lockedRoom['host_id'],
+                $userId,
+                $players[$lockedRoom['host_id']],
+                $players[$userId],
+                $lockedRoom['max_rounds'],
+                $lockedRoom['id']
+            ]);
+        } else {
+            $stmt = db()->prepare("
+                INSERT INTO games (player1_id, player2_id, max_rounds, status, is_private, private_room_id)
+                VALUES (?, ?, ?, 'active', TRUE, ?)
+            ");
+            $stmt->execute([
+                $lockedRoom['host_id'],
+                $userId,
+                $lockedRoom['max_rounds'],
+                $lockedRoom['id']
+            ]);
+        }
         $gameId = db()->lastInsertId();
 
         // Create first round
